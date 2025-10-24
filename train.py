@@ -25,10 +25,11 @@ Hacked together by / Copyright 2020 Ross Wightman (https://github.com/rwightman)
 # - Adjusted training loop to support the thinking approach
 
 
-
 import warnings
+
 warnings.filterwarnings('ignore')
 from absl import logging
+
 logging.set_verbosity(logging.ERROR)
 
 import argparse
@@ -47,8 +48,8 @@ import torch.nn as nn
 import torchvision.utils
 import yaml
 from torch.nn.parallel import DistributedDataParallel as NativeDDP
-from timm.utils.model import _freeze_unfreeze
-import random
+# from timm.utils.model import _freeze_unfreeze
+# import random
 
 from timm import utils
 from timm.data import create_dataset, create_loader, resolve_data_config, Mixup, FastCollateMixup, AugMixDataset
@@ -63,6 +64,7 @@ try:
     from apex import amp
     from apex.parallel import DistributedDataParallel as ApexDDP
     from apex.parallel import convert_syncbn_model
+
     has_apex = True
 except ImportError:
     has_apex = False
@@ -76,18 +78,19 @@ except AttributeError:
 
 try:
     import wandb
+
     has_wandb = True
 except ImportError:
     has_wandb = False
 
 try:
     from functorch.compile import memory_efficient_fusion
+
     has_functorch = True
 except ImportError as e:
     has_functorch = False
 
 has_compile = hasattr(torch, 'compile')
-
 
 _logger = logging.getLogger('train')
 
@@ -96,7 +99,6 @@ _logger = logging.getLogger('train')
 config_parser = parser = argparse.ArgumentParser(description='Training Config', add_help=False)
 parser.add_argument('-c', '--config', default='', type=str, metavar='FILE',
                     help='YAML config file specifying default arguments')
-
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 
@@ -191,7 +193,7 @@ scripting_group.add_argument('--torchcompile', nargs='?', type=str, default=None
 # Device & distributed
 group = parser.add_argument_group('Device parameters')
 group.add_argument('--device', default='cuda', type=str,
-                    help="Device (accelerator) to use.")
+                   help="Device (accelerator) to use.")
 group.add_argument('--amp', action='store_true', default=False,
                    help='use NVIDIA Apex AMP or Native AMP for mixed precision training')
 group.add_argument('--amp-dtype', default='float16', type=str,
@@ -503,12 +505,12 @@ def main():
         **factory_kwargs,
         **args.model_kwargs,
     )
-    #----**----#               
+    # ----**----#
     model.alpha = nn.ParameterList([nn.Parameter(torch.zeros(1)) for _ in range(12)])
-    model.proj_layer = nn.Linear(64*int(args.thinking_stages[0]), 768).to(device)
+    model.proj_layer = nn.Linear(64 * int(args.thinking_stages[0]), 768).to(device)
     if len(args.thinking_stages) == 3:
-        model.proj_layer2 = nn.Linear(64*int(args.thinking_stages[1]), 768).to(device)
-    #----**----#               
+        model.proj_layer2 = nn.Linear(64 * int(args.thinking_stages[1]), 768).to(device)
+    # ----**----#
     total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"After freezing: Total number of trainable parameters: {total_params}\n")
 
@@ -650,7 +652,8 @@ def main():
         else:
             if utils.is_primary(args):
                 _logger.info("Using native Torch DistributedDataParallel.")
-            model = NativeDDP(model, device_ids=[device], broadcast_buffers=not args.no_ddp_bb, find_unused_parameters=True)
+            model = NativeDDP(model, device_ids=[device], broadcast_buffers=not args.no_ddp_bb,
+                              find_unused_parameters=True)
         # NOTE: EMA model does not need to be wrapped by DDP
 
     if args.torchcompile:
@@ -881,16 +884,16 @@ def main():
                 dataset_train.set_epoch(epoch)
             elif args.distributed and hasattr(loader_train.sampler, 'set_epoch'):
                 loader_train.sampler.set_epoch(epoch)
-            if epoch ==0:
-                RLDropping(model,used_heads=int(args.thinking_stages[-1]), max_heads=12, ema=False)
+            if epoch == 0:
+                RLDropping(model, used_heads=int(args.thinking_stages[-1]), max_heads=12, ema=False)
                 validate(
-                        model,
-                        loader_eval,
-                        validate_loss_fn,
-                        args,
-                        device=device,
-                        amp_autocast=amp_autocast,
-                        log_suffix='Test val',
+                    model,
+                    loader_eval,
+                    validate_loss_fn,
+                    args,
+                    device=device,
+                    amp_autocast=amp_autocast,
+                    log_suffix='Test val',
                 )
             train_metrics = train_one_epoch(
                 epoch,
@@ -915,9 +918,9 @@ def main():
                 utils.distribute_bn(model, args.world_size, args.dist_bn == 'reduce')
 
             if loader_eval is not None:
-                #----**----#
-                RLDropping(model,used_heads=int(args.thinking_stages[-1]), max_heads=12, ema=False)
-                #----**----#
+                # ----**----#
+                RLDropping(model, used_heads=int(args.thinking_stages[-1]), max_heads=12, ema=False)
+                # ----**----#
                 eval_metrics = validate(
                     model,
                     loader_eval,
@@ -931,34 +934,34 @@ def main():
                 # ----**----#
                 RLDropping(model, used_heads=int(args.thinking_stages[-2]), max_heads=12, ema=False)
                 validate(
+                    model,
+                    loader_eval,
+                    validate_loss_fn,
+                    args,
+                    device=device,
+                    amp_autocast=amp_autocast,
+                    log_suffix=f' -{args.thinking_stages[-2]} HEADS',
+                )
+                # ----**----#
+                if len(args.thinking_stages) == 3:
+                    RLDropping(model, used_heads=int(args.thinking_stages[-3]), max_heads=12, ema=False)
+                    validate(
                         model,
                         loader_eval,
                         validate_loss_fn,
                         args,
                         device=device,
                         amp_autocast=amp_autocast,
-                        log_suffix=f' -{args.thinking_stages[-2]} HEADS',
-                        )
-                # ----**----#
-                if len(args.thinking_stages)==3:
-                    RLDropping(model, used_heads=int(args.thinking_stages[-3]), max_heads=12, ema=False)
-                    validate(
-                            model,
-                            loader_eval,
-                            validate_loss_fn,
-                            args,
-                            device=device,
-                            amp_autocast=amp_autocast,
-                            log_suffix=f' -{args.thinking_stages[-3]} HEADS',
-                            )
+                        log_suffix=f' -{args.thinking_stages[-3]} HEADS',
+                    )
                 # ----**----#
 
                 if model_ema is not None and not args.model_ema_force_cpu:
                     if args.distributed and args.dist_bn in ('broadcast', 'reduce'):
                         utils.distribute_bn(model_ema, args.world_size, args.dist_bn == 'reduce')
-                    #----**----#
+                    # ----**----#
                     RLDropping(model_ema, used_heads=int(args.thinking_stages[-1]), max_heads=12, ema=True)
-                    #----**----#
+                    # ----**----#
                     ema_eval_metrics = validate(
                         model_ema,
                         loader_eval,
@@ -970,31 +973,31 @@ def main():
                     )
                     eval_metrics = ema_eval_metrics
 
-                    #----**----#
-                    RLDropping(model_ema,used_heads=int(args.thinking_stages[-2]), max_heads=12, ema=True)
+                    # ----**----#
+                    RLDropping(model_ema, used_heads=int(args.thinking_stages[-2]), max_heads=12, ema=True)
                     validate(
-                            model_ema,
-                            loader_eval,
-                            validate_loss_fn,
-                            args,
-                            device=device,
-                            amp_autocast=amp_autocast,
-                            log_suffix=f' (EMA)-{args.thinking_stages[-2]} HEADS',
-                            )
+                        model_ema,
+                        loader_eval,
+                        validate_loss_fn,
+                        args,
+                        device=device,
+                        amp_autocast=amp_autocast,
+                        log_suffix=f' (EMA)-{args.thinking_stages[-2]} HEADS',
+                    )
 
-                    #----**----#
-                if len(args.thinking_stages)==3:
-                    RLDropping(model_ema,used_heads=int(args.thinking_stages[-3]), max_heads=12, ema=True)
+                    # ----**----#
+                if len(args.thinking_stages) == 3:
+                    RLDropping(model_ema, used_heads=int(args.thinking_stages[-3]), max_heads=12, ema=True)
                     validate(
-                            model_ema,
-                            loader_eval,
-                            validate_loss_fn,
-                            args,
-                            device=device,
-                            amp_autocast=amp_autocast,
-                            log_suffix=f' (EMA)-{args.thinking_stages[-3]} HEADS',
-                            )
-                    #----**----# 
+                        model_ema,
+                        loader_eval,
+                        validate_loss_fn,
+                        args,
+                        device=device,
+                        amp_autocast=amp_autocast,
+                        log_suffix=f' (EMA)-{args.thinking_stages[-3]} HEADS',
+                    )
+                    # ----**----#
 
             else:
                 eval_metrics = None
@@ -1039,12 +1042,13 @@ def main():
         _logger.info('*** Best metric: {0} (epoch {1})'.format(best_metric, best_epoch))
     print(f'--result\n{json.dumps(results, indent=4)}')
 
-def RLDropping(model, used_heads:int, max_heads:int, ema:bool):
-    
+
+def RLDropping(model, used_heads: int, max_heads: int, ema: bool):
     if ema or isinstance(model, NativeDDP):
-        model.module.p = used_heads/max_heads
+        model.module.p = used_heads / max_heads
     else:
-        model.p = used_heads/max_heads
+        model.p = used_heads / max_heads
+
 
 def train_one_epoch(
         epoch,
@@ -1105,16 +1109,19 @@ def train_one_epoch(
         data_time_m.update(accum_steps * (time.time() - data_start_time))
 
         def _forward():
- 
+
             with amp_autocast():
-                #----**----#
-                if len(args.thinking_stages)==2:
-                    output_stage_0, ououtput_stage_1  = model(input, threshold=None, thinking_stages=args.thinking_stages)
-                    loss = 0.5*loss_fn(output_stage_0, target) + 0.5*loss_fn(ououtput_stage_1, target)
-                if len(args.thinking_stages)==3:
-                    output_stage_0, ououtput_stage_1, ououtput_stage_2 = model(input, threshold=None, thinking_stages=args.thinking_stages)
-                    loss = (1/3)*loss_fn(output_stage_0, target) + (1/3)*loss_fn(ououtput_stage_1, target) + (1/3)*loss_fn(ououtput_stage_2, target)
-                #----**----#               
+                # ----**----#
+                if len(args.thinking_stages) == 2:
+                    output_stage_0, ououtput_stage_1 = model(input, threshold=None,
+                                                             thinking_stages=args.thinking_stages)
+                    loss = 0.5 * loss_fn(output_stage_0, target) + 0.5 * loss_fn(ououtput_stage_1, target)
+                if len(args.thinking_stages) == 3:
+                    output_stage_0, ououtput_stage_1, ououtput_stage_2 = model(input, threshold=None,
+                                                                               thinking_stages=args.thinking_stages)
+                    loss = (1 / 3) * loss_fn(output_stage_0, target) + (1 / 3) * loss_fn(ououtput_stage_1, target) + (
+                                1 / 3) * loss_fn(ououtput_stage_2, target)
+                # ----**----#
             if accum_steps > 1:
                 loss /= accum_steps
             return loss
@@ -1242,7 +1249,7 @@ def validate(
                 input = input.contiguous(memory_format=torch.channels_last)
 
             with amp_autocast():
-                output= model(input, threshold=None, thinking_stages=args.thinking_stages, train_val=True)
+                output = model(input, threshold=None, thinking_stages=args.thinking_stages, train_val=True)
 
                 if isinstance(output, (tuple, list)):
                     output = output[0]

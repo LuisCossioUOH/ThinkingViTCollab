@@ -39,7 +39,7 @@ def load_state_dict(
             assert _has_safetensors, "`pip install safetensors` to use .safetensors"
             checkpoint = safetensors.torch.load_file(checkpoint_path, device=device)
         else:
-            checkpoint = torch.load(checkpoint_path, map_location=device)
+            checkpoint = torch.load(checkpoint_path, map_location=device,weights_only=False)
 
         state_dict_key = ''
         if isinstance(checkpoint, dict):
